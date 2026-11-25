@@ -35,6 +35,7 @@
 3. Click **Yes** on the Windows UAC prompt (and **More info -> Run anyway** if SmartScreen appears on first run).
 
 - **Existing saves:** Fully compatible — your saves stay untouched.
+- **Other add-ons:** Compatible with **RL Career Pro Presets v1.0** (zero hook/file overlap — Pro Presets only modifies `start_match.py` for bot presets). Not tested with other community add-ons (separate launcher `.exe` mods cannot be stacked together).
 - **Uninstall / Vanilla:** Simply open the normal **RL Career Hub** shortcut anytime. To delete cached Career+ files, remove `%LOCALAPPDATA%\RLCareerPlus` and `%APPDATA%\bakkesmod\bakkesmod\plugins\rlcareerplus.dll`.
 
 ---
