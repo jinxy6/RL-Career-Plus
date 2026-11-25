@@ -58,8 +58,11 @@ async function waitInspectorUrl(port) {
 function remoteEvalExpr() {
   const inproc = path.join(__dirname, 'inproc.js').replace(/\\/g, '/');
   return `(function () {
-    const req = (typeof require === 'function' ? require : (process.mainModule && process.mainModule.require.bind(process.mainModule)));
-    if (!req) return 'no-require';
+    let req = (typeof require === 'function' ? require : (process.mainModule && process.mainModule.require.bind(process.mainModule)));
+    if (!req && typeof process.getBuiltinModule === 'function') {
+      try { const M = process.getBuiltinModule('module'); if (M && M.createRequire) req = M.createRequire(${JSON.stringify(inproc)}); } catch {}
+    }
+    if (!req) return 'wait-require';
     return req(${JSON.stringify(inproc)}).attach({ log: ${JSON.stringify(LOG)}, closeInspector: true });
   })()`;
 }
@@ -179,7 +182,8 @@ function openInspectorWs(wsUrl) {
     let status;
     try { status = await evalRemote(); } catch (e) { status = 'error: ' + e.message; }
     if (status !== last) { say('status: ' + status); last = status; }
-    if (status === 'wrapped' || status === 'already' || String(status).startsWith('error') || status === 'no-require') break;
+    if (status === 'wrapped' || status === 'already' || String(status).startsWith('error')) break;
+    if (status === 'wait-require' && Date.now() - t0 > 15000) break;
     await sleep(Date.now() - t0 < 4000 ? 100 : 300);
   }
 
