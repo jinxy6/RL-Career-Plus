@@ -3,6 +3,9 @@ const fs = require('fs');
 const path = require('path');
 const Module = require('module');
 const { pathToFileURL } = require('url');
+const staff = require('./staff-engine');
+const yOverhaul = require('./y-engine');
+const crowd = require('./crowd-engine');
 
 const DEFAULT_CFG = {
   autoTrain: true,
@@ -608,6 +611,50 @@ function syncCareerNamePlugin(name, log) {
   }
 }
 
+function patchSnapshot(engine, res, log) {
+  if (!res || typeof res !== 'object' || !res.career) return res;
+  const st = (liveState && liveState.userTeamId === res.career.userTeamId && liveState.userPlayerId === res.career.userPlayerId)
+    ? liveState
+    : res.career;
+  if (!st || !Array.isArray(st.players)) return res;
+  try {
+    staff.ensureStaffState(engine, st);
+    const staffSnap = staff.buildStaffSnapshot(engine, st);
+    res.cpStaff = staffSnap;
+    if (res.scouting && typeof res.scouting === 'object') {
+      const hiredScouts = staff.getStaffByRole(st, 'scout');
+      res.scouting.slots = hiredScouts.length;
+      if (Array.isArray(res.scouting.staff)) {
+        const byId = new Map(hiredScouts.map((s) => [s.id, s]));
+        res.scouting.staff = res.scouting.staff.map((row) => {
+          const hit = byId.get(row.id);
+          return hit ? { ...row, tier: hit.tier, tierLabel: staff.TIER_META[hit.tier]?.label || 'Mid' } : row;
+        });
+      }
+    }
+    if (res.econ && Array.isArray(res.econ.billRows)) {
+      const byId = new Map((st.staff || []).map((s) => [s.id, s]));
+      res.econ.billRows = res.econ.billRows.map((row) => {
+        if (!row || row.kind !== 'staff') return row;
+        const member = byId.get(row.id);
+        if (!member) return row;
+        const def = staff.ROLE_DEFS[member.role] || staff.ROLE_DEFS.scout;
+        const tLabel = (staff.TIER_META[member.tier] && staff.TIER_META[member.tier].label) || 'Mid';
+        const irlTag = member.irl ? ' · IRL' : '';
+        return { ...row, sub: `${def.name} · ${tLabel}${irlTag}` };
+      });
+    }
+    if (res.training && typeof res.training === 'object') {
+      res.training.cooldownDays = staffSnap.trainCooldownDays;
+    }
+    res.cpY = yOverhaul.buildYSnapshot(engine, st, engine.__yClipLib);
+    res.cpCrowd = crowd.buildCrowdSnapshot(engine, st);
+  } catch (e) {
+    if (log) log('patchSnapshot err: ' + e.message);
+  }
+  return res;
+}
+
 function installTitleHook(engine, log) {
   const { app, ipcMain } = require('electron');
   syncCareerNamePlugin('', log);
@@ -634,22 +681,25 @@ function installTitleHook(engine, log) {
       const ck = String(st.userPlayerId) + '|' + ((me && me.titles && me.titles.length) || 0) + '|' + doneCups + '|' + (cfg.selectedTitle || '');
       if (st === titleCacheState && ck === titleCacheKey && titleCacheVal) {
         res.cpTitles = titleCacheVal;
-        return res;
+      } else {
+        const tm = getTitlesMod();
+        const list = buildEarnedTitles(st, me, tm);
+        const active = resolveUserTitle(st, me, tm);
+        titleCacheState = st;
+        titleCacheKey = ck;
+        titleCacheVal = {
+          selected: cfg.selectedTitle || '',
+          activeDisplay: active ? active.display : '',
+          activeId: active ? active.id : '',
+          list: list.map((t) => ({ key: t.key, display: t.display, id: t.id })),
+        };
+        res.cpTitles = titleCacheVal;
       }
-      const tm = getTitlesMod();
-      const list = buildEarnedTitles(st, me, tm);
-      const active = resolveUserTitle(st, me, tm);
-      titleCacheState = st;
-      titleCacheKey = ck;
-      titleCacheVal = {
-        selected: cfg.selectedTitle || '',
-        activeDisplay: active ? active.display : '',
-        activeId: active ? active.id : '',
-        list: list.map((t) => ({ key: t.key, display: t.display, id: t.id })),
-      };
-      res.cpTitles = titleCacheVal;
+
+      // Layer Club Staff Rework, Y (Socials) Overhaul & LAN Crowd Pops onto snapshot
+      patchSnapshot(engine, res, log);
     } catch (e) {
-      log('cpTitles err: ' + e.message);
+      log('cpTitles/addons err: ' + e.message);
     }
     return res;
   };
@@ -689,9 +739,12 @@ function installTitleHook(engine, log) {
       if (isArm && liveState && liveState.userPlayerId != null && typeof engine.playerById === 'function') {
         const me = engine.playerById(liveState, liveState.userPlayerId);
         const safeName = me && me.name ? String(me.name).replace(/[\r\n\t]+/g, ' ').trim().slice(0, 32) : '';
-        if (safeName && syncCareerNamePlugin(safeName, log)) {
-          const out = await origSend(arr.concat(['plugin load rlcareerplus']), opts);
-          log('loaded rlcareerplus plugin for career name -> ' + safeName);
+        const extraLoads = [];
+        if (safeName && syncCareerNamePlugin(safeName, log)) extraLoads.push('plugin load rlcareerplus');
+        if (crowd.installBakkesCrowdPlugin(log).installed) extraLoads.push('plugin load rlcareer_crowd');
+        if (extraLoads.length) {
+          const out = await origSend(arr.concat(extraLoads), opts);
+          log('loaded BakkesMod plugins on arm -> ' + extraLoads.join(', ') + (safeName ? ' (' + safeName + ')' : ''));
           return out;
         }
       }
@@ -754,7 +807,15 @@ function installUiHook(log) {
     cars: fileUrl('bg_cars.jpg'),
     arenas: arenaFiles,
   }) + ';';
-  const uiSrc = bgsScript + fs.readFileSync(path.join(__dirname, 'ui.js'), 'utf8');
+  const readOpt = (fname) => {
+    const p = path.join(__dirname, fname);
+    return fs.existsSync(p) ? '\n' + fs.readFileSync(p, 'utf8') : '';
+  };
+  const uiSrc = bgsScript
+    + fs.readFileSync(path.join(__dirname, 'ui.js'), 'utf8')
+    + readOpt('staff-ui.js')
+    + readOpt('y-ui.js')
+    + readOpt('crowd-ui.js');
   const injectedUrls = new WeakMap();
   const inject = (wc) => {
     try {
@@ -762,7 +823,7 @@ function installUiHook(log) {
       if (!/renderer[\\/]index\.html/.test(url)) return;
       if (injectedUrls.get(wc) === url) return;
       injectedUrls.set(wc, url);
-      wc.executeJavaScript(uiSrc + '; window.__careerPlusUI ? "ui-ok" : "ui-false";')
+      wc.executeJavaScript(uiSrc + '; (window.__careerPlusUI ? "ui-ok" : "ui-false") + "+" + (window.__staffReworkUI ? "sr-ok" : "sr-no") + "+" + (window.__yOverhaulUI ? "yo-ok" : "yo-no") + "+" + (window.__crowdPopUI ? "cr-ok" : "cr-no");')
         .then((r) => log('ui inject ' + url + ' -> ' + r))
         .catch((e) => { injectedUrls.delete(wc); log('ui inject failed: ' + e.message); });
     } catch (e) {
@@ -1031,14 +1092,38 @@ function attach(opts = {}) {
   if (!lk) return 'wait';
 
   const engine = Module._cache[lk].exports;
+  // Wait until engine/league.js has finished executing module.exports = {...}
+  if (!engine || typeof engine.advance !== 'function' || typeof engine.placeBet !== 'function') {
+    return 'wait';
+  }
   if (engine.__careerPlus) return 'already';
 
   try {
     wrapEngine(engine);
+    const origStaffList = engine.staffList;
+    if (typeof origStaffList === 'function') {
+      engine.staffList = function cpTrackStaffList(st) {
+        rememberState(st);
+        return origStaffList.call(this, st);
+      };
+    }
+    staff.wrapStaffEngine(engine, { dataDirs: [path.join(path.dirname(lk), '..', 'data')] });
+    yOverhaul.wrapYEngine(engine);
+    crowd.wrapCrowdEngine(engine);
+    crowd.installBakkesCrowdPlugin(log);
+    const { BrowserWindow } = require('electron');
+    crowd.startCrowdWatcher(() => liveState, engine, (evtPayload) => {
+      const js = `window.__crowdPopPlay && window.__crowdPopPlay(${JSON.stringify(evtPayload)});`;
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (win && !win.isDestroyed() && !win.__cpIntro && win.webContents && !win.webContents.isDestroyed()) {
+          win.webContents.executeJavaScript(js).catch(() => {});
+        }
+      }
+    }, log);
     installTitleHook(engine, log);
     installGameLaunchHook(log);
     installUiHook(log);
-    log('attached to ' + lk);
+    log('attached (Career+ + Staff Rework + Y Overhaul + LAN Crowd Pops) to ' + lk);
     if (opts.closeInspector) {
       try { require('inspector').close(); } catch { }
     }
@@ -1049,4 +1134,4 @@ function attach(opts = {}) {
   }
 }
 
-module.exports = { attach, wrapEngine, wrapGameLaunch, sanitizeEpicCmd, buildEarnedTitles, resolveUserTitle, catchUpTraining, fillAutoSlots };
+module.exports = { attach, patchSnapshot, wrapEngine, wrapGameLaunch, sanitizeEpicCmd, buildEarnedTitles, resolveUserTitle, catchUpTraining, fillAutoSlots };
