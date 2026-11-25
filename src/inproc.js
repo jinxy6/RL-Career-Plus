@@ -619,24 +619,27 @@ function installTitleHook(engine, log) {
   let titleCacheKey = '';
   let titleCacheVal = null;
   const patchSnap = (res) => {
-    if (!res || typeof res !== 'object' || !res.career || !liveState) return res;
+    if (!res || typeof res !== 'object' || !res.career) return res;
+    if (!liveState && Array.isArray(res.career.players) && res.career.userTeamId != null) liveState = res.career;
+    const st = (liveState && liveState.userPlayerId === res.career.userPlayerId) ? liveState : res.career;
+    if (!st || !Array.isArray(st.players)) return res;
     try {
-      const me = liveState.userPlayerId != null && typeof engine.playerById === 'function'
-        ? engine.playerById(liveState, liveState.userPlayerId)
-        : null;
-      const cfg = liveState.careerPlus || liveState.jnyMod || {};
-      const cups = (liveState.intl && liveState.intl.cups) || [];
+      const me = st.userPlayerId != null && typeof engine.playerById === 'function'
+        ? engine.playerById(st, st.userPlayerId)
+        : st.players.find((p) => p && (p.isUser || p.id === st.userPlayerId));
+      const cfg = st.careerPlus || st.jnyMod || {};
+      const cups = (st.intl && st.intl.cups) || [];
       let doneCups = 0;
       for (let i = 0; i < cups.length; i++) if (cups[i] && (cups[i].stage === 'done' || cups[i].championId != null)) doneCups++;
-      const ck = String(liveState.userPlayerId) + '|' + ((me && me.titles && me.titles.length) || 0) + '|' + doneCups + '|' + (cfg.selectedTitle || '');
-      if (liveState === titleCacheState && ck === titleCacheKey && titleCacheVal) {
+      const ck = String(st.userPlayerId) + '|' + ((me && me.titles && me.titles.length) || 0) + '|' + doneCups + '|' + (cfg.selectedTitle || '');
+      if (st === titleCacheState && ck === titleCacheKey && titleCacheVal) {
         res.cpTitles = titleCacheVal;
         return res;
       }
       const tm = getTitlesMod();
-      const list = buildEarnedTitles(liveState, me, tm);
-      const active = resolveUserTitle(liveState, me, tm);
-      titleCacheState = liveState;
+      const list = buildEarnedTitles(st, me, tm);
+      const active = resolveUserTitle(st, me, tm);
+      titleCacheState = st;
       titleCacheKey = ck;
       titleCacheVal = {
         selected: cfg.selectedTitle || '',
