@@ -42,7 +42,7 @@
 ## Transparency & Security Notes
 
 - **Why Administrator elevation (`app.manifest`)?** Many Epic Games Launcher / BakkesMod setups run elevated; requesting elevation prevents Windows `Access Denied` errors when Career Hub closes Epic's initial Rocket League process or restarts BakkesMod before a match.
-- **What does `rlcareerplus.dll` do?** Built solely from [rlcareerplus.cpp](./rlcareerplus.cpp) using the official BakkesMod SDK (`pluginsdk.lib`, zero memory offsets). It reads `%APPDATA%\bakkesmod\bakkesmod\data\rlcareermode\career_name.txt`, calls `PriWrapper::eventSetPlayerName()` only when `!IsInOnlineGame()`, and sets `ABOVE_NORMAL_PRIORITY_CLASS` on `RocketLeague.exe`.
+- **What does `rlcareerplus.dll` do?** Built solely from [src/rlcareerplus.cpp](./src/rlcareerplus.cpp) using the official BakkesMod SDK (`pluginsdk.lib`, zero memory offsets). It reads `%APPDATA%\bakkesmod\bakkesmod\data\rlcareermode\career_name.txt`, calls `PriWrapper::eventSetPlayerName()` only when `!IsInOnlineGame()`, and sets `ABOVE_NORMAL_PRIORITY_CLASS` on `RocketLeague.exe`.
 
 ---
 
