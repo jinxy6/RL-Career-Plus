@@ -1,0 +1,12 @@
+# Binary outputs & large media (hosted in GitHub Releases)
+RL Career Hub - Career+.exe
+*.exe
+*.dll
+*.lib
+*.exp
+*.obj
+intro.webm
+intro.mp4
+intro.html
+prefs.json
+*.log
