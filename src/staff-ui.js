@@ -784,23 +784,30 @@
       return;
     }
 
+    const goToStaffRole = (roleKey) => {
+      selectedRole = roleKey || 'scout';
+      if (typeof bigList !== 'undefined') bigList = null;
+      if (typeof officeOpen !== 'undefined') officeOpen = null;
+      if (typeof closeModal === 'function') closeModal();
+      else {
+        const mr = document.getElementById('modal-root');
+        if (mr) mr.innerHTML = '';
+      }
+      if (typeof tab !== 'undefined') tab = 'staffrework';
+      if (typeof render === 'function') render();
+    };
+
     const openRole = t.closest('[data-sr-open-role]');
     if (openRole) {
       e.stopPropagation();
-      selectedRole = openRole.dataset.srOpenRole || 'scout';
-      if (typeof officeOpen !== 'undefined') officeOpen = null;
-      if (typeof tab !== 'undefined') tab = 'staffrework';
-      if (typeof render === 'function') render();
+      goToStaffRole(openRole.dataset.srOpenRole || 'scout');
       return;
     }
 
     const openAsst = t.closest('[data-sr-open-asst]');
     if (openAsst) {
       e.stopPropagation();
-      selectedRole = 'assistant_coach';
-      if (typeof officeOpen !== 'undefined') officeOpen = null;
-      if (typeof tab !== 'undefined') tab = 'staffrework';
-      if (typeof render === 'function') render();
+      goToStaffRole('assistant_coach');
       return;
     }
 
